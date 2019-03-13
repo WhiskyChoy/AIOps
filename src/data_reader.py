@@ -1,10 +1,9 @@
 import argparse
 from collections import OrderedDict
-
+import numpy as np
 import pandas as pd
 import os
 import xarray as xr
-import numpy as np
 from functools import reduce
 from sklearn.externals import joblib
 import itertools
@@ -21,38 +20,65 @@ data_cube_path = pickle_folder + 'data_cube_path.pkl'
 xr_attr_dict_path = pickle_folder + 'xr_attr_dict.pkl'
 df_columns_path = pickle_folder + 'df_columns.pkl'
 leaf_attr_vector_list_path = pickle_folder + 'leaf_attr_vector_list.pkl'
+# 是否过滤未知的值
 filter_valid = True
+# 是否自定义表头 None取全部
 header = None
+# 要取的文件数 None取全部
 max_num = None
+# 是否使用n维字典
 use_xr_cube = False
+# 保存数据为pickle文件
 save_pickle_data = True
-load_from_pickle = True
+# 直接从pickle文件中读取数据
+load_from_pickle = False
+
+# 打印进度时每行的长度
 counter_line_num = 20
+# 允许运行时指令
 enable_run_time_order = True
+# 允许使用全组合生成的节点
 enable_get_full_vector = False
 
 # data that can be stored
+# 所有数据
 data_dict = {}
+# n维字典数据
 data_cube = {}
+# 列头（包括属性和最后一列）
 df_columns = []
+# key: 属性 value：这一属性所有可能取得的值
 xr_attr_dict = OrderedDict()
+
+# 用来存储通过组合产生的所有属性可取值的组合 {1:a1, 2: b1, 3:c1} {1:a1, 2: b1, 3:c2}......
 leaf_attr_vector_list = []
 
+# 文件名的列表，实际上就是时间戳的组合
 filename_list = os.listdir(data_folder)
+# 时间戳的排序
 filename_list.sort()
+# 截取要的时间戳数目
 filename_list = filename_list[:max_num]
-
+# 数据起始时间
 start_time_stamp = get_time_stamp(filename_list[0])
+# 数据结束时间
 end_time_stamp = get_time_stamp(filename_list[-1])
+# 监控时间的间隔
 time_interval = get_time_stamp(filename_list[1]) - start_time_stamp
+# 总时间
 total_time = end_time_stamp - start_time_stamp
+# 一天的毫秒数
 one_day_in_mills = 24 * 60 * 60 * 1000
+# 一周的毫秒数
 one_week_in_mills = 7 * one_day_in_mills
 
-# 决定周期时间
+# 决定周期时间 （这里可以设为一周或者一天）
 period_time = one_week_in_mills
 
+# 总时间段里面有多少个时间周期
 n_period_before = total_time // period_time
+
+# 最后一个时间周期所在的位置
 last_period_start = start_time_stamp + n_period_before * time_interval
 
 
@@ -149,6 +175,7 @@ def trans_attr_dict(attr_dict):
     return {str(key): value for key, value in attr_dict.items() if value != '*'}
 
 
+# 变为n维字典（太稀疏了）
 def to_xr_cube():
     global data_dict
     global xr_attr_dict
@@ -186,6 +213,7 @@ else:
 print(xr_attr_dict)
 
 
+# 获取如{1:a1, 2:b2, 3:c3}的实际值 （1、a1等可能是str类型）
 def get_v(timestamp=start_time_stamp, attr_dict=None):
     if attr_dict is None:
         attr_dict = OrderedDict()
@@ -217,6 +245,7 @@ def get_v(timestamp=start_time_stamp, attr_dict=None):
         return result
 
 
+# 获取如{1:a1, 2:b2, 3:c3}的预测值 （使用前几个周期对应时间点的平均数）
 def get_f(timestamp=last_period_start, attr_dict=None):
     if attr_dict is None:
         attr_dict = OrderedDict()
@@ -240,6 +269,7 @@ def get_next_key(ordered_dict=None, key=object()):
         return None
 
 
+# 按乘法原理获取全组合
 # len(list(xr_attr_dict.keys()))太大可能会爆内存
 def generate_combination_save(container=None, all_dict=None, attr_dict=None, key=object()):
     if container is None:
@@ -259,6 +289,7 @@ def generate_combination_save(container=None, all_dict=None, attr_dict=None, key
         container.append(attr_dict)
 
 
+# 计算全组合下的leaf node {1:a1, 2: b1, 3:c1} {1:a1, 2: b1, 3:c2}......
 # WARNING 这里想错了，按照这样写，vector_v很稀疏要算很久
 def compute_full_attr_vector():
     generate_combination_save(leaf_attr_vector_list, xr_attr_dict, OrderedDict(), list(xr_attr_dict.keys())[0])
@@ -267,6 +298,7 @@ def compute_full_attr_vector():
     # print(leaf_attr_vector_list)
 
 
+# 获取全组合下的leaf node {1:a1, 2: b1, 3:c1} {1:a1, 2: b1, 3:c2}......
 def read_full_attr_vector():
     global leaf_attr_vector_list
     if load_from_pickle:
@@ -279,6 +311,10 @@ if enable_get_full_vector:
     read_full_attr_vector()
 
 
+# {1:a1, 2: b1, 3:c1} {1:a1, 2: b1, 3:c2} {1:a1, 2: b2, 3:c1} {1:a1, 2: b2, 3:c2} {1:a2, 2: b1, 3:c1} ...
+#          |                   |                  |                    |               |
+# [        2         ,         4             ,    3        ,           0       ,       3              ... ]
+# 获取全组合下的v向量
 def get_full_vector_v(timestamp=start_time_stamp):
     result_vector = []
     for leaf_vector in leaf_attr_vector_list:
@@ -287,6 +323,7 @@ def get_full_vector_v(timestamp=start_time_stamp):
     return result_vector
 
 
+# 获取全组合下的f向量
 def get_full_vector_f(timestamp=start_time_stamp):
     result_vector = []
     for leaf_vector in leaf_attr_vector_list:
@@ -295,6 +332,7 @@ def get_full_vector_f(timestamp=start_time_stamp):
     return result_vector
 
 
+# 获取全组合下的a向量
 def get_full_vector_a(timestamp=last_period_start, cause_set=None, input_vector_v=None):
     if cause_set is None:
         cause_set = set()
@@ -323,11 +361,13 @@ def get_full_vector_a(timestamp=last_period_start, cause_set=None, input_vector_
     return temp_vector_v
 
 
+# 获取v向量（不完整，当天的）
 def get_vector_v(timestamp=start_time_stamp):
     df_select = data_dict[timestamp]['data_frame']
     return list(df_select[df_columns[-1]])
 
 
+# 获取f向量（不完整，当天的）
 def get_vector_f(timestamp=last_period_start):
     result_vector = []
     df_select = data_dict[timestamp]['data_frame']
@@ -336,6 +376,7 @@ def get_vector_f(timestamp=last_period_start):
     return result_vector
 
 
+# 测试a是否影响b 如{1:a1, 2: b1} 影响 {1:a1, 2: b1, 3:c2}
 def a_ripples_b(attr_dict_a=None, attr_dict_b=None):
     if attr_dict_b is None:
         attr_dict_b = {}
@@ -349,12 +390,14 @@ def a_ripples_b(attr_dict_a=None, attr_dict_b=None):
     return True
 
 
+# 测试a是否为全属性都有的叶元素 如有三个属性 则{1:a1, 2: b1, 3:c2}是叶元素
 def is_leaf_element(attr_dict=None):
     if attr_dict is None:
         attr_dict = {}
     return set(attr_dict.keys()) == set(xr_attr_dict.keys())
 
 
+# 获取向量a
 def get_vector_a(timestamp=last_period_start, cause_set=None, input_vector_v=None):
     if cause_set is None:
         cause_set = set()
@@ -384,10 +427,12 @@ def get_vector_a(timestamp=last_period_start, cause_set=None, input_vector_v=Non
     return temp_vector_v
 
 
+# 获取欧氏距离
 def get_ed(np_array_1, np_array_2):
     return np.linalg.norm(np_array_1 - np_array_2)
 
 
+# 获取两个集合间的ps值
 def get_ps(timestamp=last_period_start, cause_set=None):
     if cause_set is None:
         cause_set = set()
@@ -404,6 +449,7 @@ def get_ps(timestamp=last_period_start, cause_set=None):
     return max(1 - ed_va / ed_vf, 0)
 
 
+# 获取这个的所有真子集
 def get_set_and_subset(input_set):
     result_set = []
     for i in range(1, len(input_set) + 1):
